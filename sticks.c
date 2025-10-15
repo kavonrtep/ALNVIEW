@@ -375,16 +375,35 @@ static QuadNode *Add_To_Node(QuadNode *quad, Double_Box *frame, Double_Box *seg,
       return (quad);
     }
 
+  if (deep > 40)
+    { printf("WARNING\n");
+      return (quad);
+    }
+
   if (quad->length >= 8)
     { int         i;
       QuadLeaf    leaf;
       Double_Box  new_frame;
-      DotSegment *o;
+      DotSegment *o, *s;
 
+      leaf = *((QuadLeaf *) quad);
+
+/*
+      s = SEGS + idx;
+      for (i = 0; i < 8; i++)
+        { o = SEGS + leaf.idx[i];
+          if (o->abeg != s->abeg || o->bbeg != s->bbeg || o->aend != s->aend || o->bend != s->bend)
+            break;
+        }
+      if (i >= 8)
+        { printf("TRUNCATE\n");
+          return (quad);
+        }
+*/
+  
 #ifdef DEBUG_ADD
       printf("%*sOverfull\n",2*deep,""); fflush(stdout);
 #endif
-      leaf = *((QuadLeaf *) quad);
       quad->length = 0;
       for (i = 0; i < 4; i++)
         quad->quads[i] = NULL;
