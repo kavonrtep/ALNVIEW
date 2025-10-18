@@ -384,23 +384,10 @@ static QuadNode *Add_To_Node(QuadNode *quad, Double_Box *frame, Double_Box *seg,
     { int         i;
       QuadLeaf    leaf;
       Double_Box  new_frame;
-      DotSegment *o, *s;
+      DotSegment *o;
 
       leaf = *((QuadLeaf *) quad);
 
-/*
-      s = SEGS + idx;
-      for (i = 0; i < 8; i++)
-        { o = SEGS + leaf.idx[i];
-          if (o->abeg != s->abeg || o->bbeg != s->bbeg || o->aend != s->aend || o->bend != s->bend)
-            break;
-        }
-      if (i >= 8)
-        { printf("TRUNCATE\n");
-          return (quad);
-        }
-*/
-  
 #ifdef DEBUG_ADD
       printf("%*sOverfull\n",2*deep,""); fflush(stdout);
 #endif
@@ -1370,6 +1357,7 @@ char *create_alignment(DotPlot *plot, DotLayer *layer, DotSegment *seg, char **t
   int64 aoffs, boffs;
   int   amin, amax;
   int   bmin, bmax;
+  int   period, wide;
 
   (void) print_seq;
 
@@ -1393,7 +1381,7 @@ char *create_alignment(DotPlot *plot, DotLayer *layer, DotSegment *seg, char **t
 
   oneReadLine(in);
   Read_Aln_Overlap(in,ovl);
-  path->tlen  = Read_Aln_Trace(in,(uint8 *) trace);
+  path->tlen  = Read_Aln_Trace(in,(uint8 *) trace,&period);
   path->trace = trace;
 
   acont = ovl->aread;
@@ -1504,7 +1492,14 @@ char *create_alignment(DotPlot *plot, DotLayer *layer, DotSegment *seg, char **t
   else
     aln->bseq -= bmin;
 
-  Compute_Trace_PTS(aln,work,layer->tspace,GREEDIEST,1,-1);
+  if (gdb1 == gdb2 && period != 0)
+    { wide = .2*period;
+      if (wide < 1)
+        wide = 1;
+      Compute_Trace_PTS(aln,work,layer->tspace,GREEDIEST,period-wide,period+wide);
+    }
+  else
+    Compute_Trace_PTS(aln,work,layer->tspace,GREEDIEST,1,-1);
 
   Gap_Improver(aln,work);
 

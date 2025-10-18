@@ -349,7 +349,7 @@ void Read_Aln_Overlap(OneFile *of, Overlap *ovl)
     }
 }
 
-int Read_Aln_Trace(OneFile *of, uint8 *trace)
+int Read_Aln_Trace(OneFile *of, uint8 *trace, int *period)
 { int64 *trace64;
   int    tlen;
   int    j, x;
@@ -380,9 +380,13 @@ int Read_Aln_Trace(OneFile *of, uint8 *trace)
   for (x = 0; x < tlen; x += 2)
     trace[x] = trace64[j++];
 
+  if (period != NULL)
+    *period = 0;
   while (oneReadLine(of))       // move to start of next alignment
     if (of->lineType == 'A')
       break;
+    else if (of->lineType == 'U' && period != NULL)
+      *period = oneInt(of,0);
 
   return (tlen);
 }
@@ -463,7 +467,7 @@ void Write_Aln_Overlap (OneFile *of, Overlap *ovl)
   oneWriteLine (of,'D',0,0);
 }
 
-void Write_Aln_Trace (OneFile *of, uint8 *trace, int tlen, int64 *trace64)
+void Write_Aln_Trace (OneFile *of, uint8 *trace, int tlen, int64 *trace64, int period)
 { int j, x;
 
   j = 0;
@@ -475,4 +479,7 @@ void Write_Aln_Trace (OneFile *of, uint8 *trace, int tlen, int64 *trace64)
   for (x = 0; x < tlen; x += 2)
     trace64[j++] = trace[x];
   oneWriteLine(of,'X',j,trace64);
+
+  oneInt(of,0) = period;
+  oneWriteLine(of,'U',0,NULL);
 }
