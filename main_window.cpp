@@ -131,8 +131,10 @@ DotCanvas::DotCanvas(QWidget *parent) : QWidget(parent)
   rubber  = new QRubberBand(QRubberBand::Rectangle, this);
   timer   = new QBasicTimer();
 
-  image  = NULL;
-  raster = new uchar *[screen()->availableGeometry().height()];
+  pimage  = NULL;
+  nimage  = NULL;
+  praster = new uchar *[screen()->availableGeometry().height()];
+  nraster = new uchar *[screen()->availableGeometry().height()];
 
   setAttribute(Qt::WA_KeyCompression,false);
 
@@ -690,7 +692,6 @@ void DotCanvas::mouseReleaseEvent(QMouseEvent *event)
       printf("Selected\n");
 #endif
       QRect reg  = rubber->geometry();
-      View  undo = state->view;
       int64 xb = frame.x + ((reg.x()-20.)/(rectW-40.))*frame.w;
       int64 yb = frame.y + ((reg.y()-20.)/(rectH-40.))*frame.h;
       int64 xe = frame.x + (((reg.x()-20.)+reg.width())/(rectW-40.))*frame.w;
@@ -711,10 +712,8 @@ void DotCanvas::mouseReleaseEvent(QMouseEvent *event)
       printf("Region select (%d,%d) %d x %d\n",reg.x(),reg.y(),reg.width(),reg.height());
       printf("      = view  (%lld,%lld) (%lld,%lld)\n",xb,yb,xe,ye);
 #endif
-      if (viewToFrame())
-        update();
-      else
-        state->view = undo;
+      viewToFrame();
+      repaint();
     }
   else if (picking)
     { if (!menuLock)
@@ -762,12 +761,11 @@ void DotCanvas::showAlign()
   awin->show();
   awin->move(QPoint(state->wGeom.x()+DotWindow::windowHeight,state->wGeom.y()));
   awin->raise();
-
-  // par->addTextBox(awin);
 }
  
-QVector<QRgb>  DotCanvas::ctable(2);
-QVector<uchar> DotCanvas::imbit(8);
+QVector<QRgb>  DotCanvas::pctable(2);
+QVector<QRgb>  DotCanvas::nctable(2);
+QVector<uchar> DotCanvas::imbit(16);
 
 void DotCanvas::paintEvent(QPaintEvent *event)
 { QPainter  painter;
@@ -816,8 +814,6 @@ void DotCanvas::paintEvent(QPaintEvent *event)
             { state->zMag.push(mag);
               break;
             }
-          // x = state->zXct.pop();
-          // y = state->zYct.pop();
         }
     }
   state->lMag = cMag;
@@ -1064,98 +1060,122 @@ void DotCanvas::paintEvent(QPaintEvent *event)
           continue;
 
         if (k == 0)
-          { int   r, g, b;
-            int   kmer, klen;
-            Dots *dot;
+          { int    r, g, b;
+            int    kmer, klen;
+            Dots  *dot;
 
-            if (state->view.w > 1000000)
+            if (state->view.w > MAX_DOTPLOT)
               continue;
 
             kmer = state->thick[0]+8;
             klen = kmer*xa;
 
-            if (image == NULL || rectW != image->width() || rectH != image->height() ||
-                (image->format() == QImage::Format_MonoLSB) == (klen >= 3))
-              { if (image != NULL)
-                  delete image;
+            if (pimage == NULL || rectW != pimage->width() || rectH != pimage->height() ||
+                (pimage->format() == QImage::Format_MonoLSB) == (klen >= 3))
+              { if (pimage != NULL)
+                  delete pimage;
+                if (nimage != NULL)
+                  delete nimage;
                 if (klen >= 3)
-                  image = new QImage(rectW,rectH,QImage::Format_RGB32);
+                  { pimage = new QImage(rectW,rectH,QImage::Format_RGB32);
+                    nimage = NULL;
+                  }
                 else
-                  { image = new QImage(rectW,rectH,QImage::Format_MonoLSB);
+                  { pimage = new QImage(rectW,rectH,QImage::Format_MonoLSB);
+                    nimage = new QImage(rectW,rectH,QImage::Format_MonoLSB);
                     for (r = 0; r < rectH; r++)
-                      raster[r] = image->scanLine(r); 
+                      { praster[r] = pimage->scanLine(r); 
+                        nraster[r] = nimage->scanLine(r); 
+                      }
                   }
               }                  
 
             if (klen < 3)
-              image->setColorTable(ctable);
-            image->fill(0);
+              { pimage->setColorTable(pctable);
+                nimage->setColorTable(nctable);
+                nimage->fill(0);
+              }
+            pimage->fill(0);
 
-            dot  = dotplot(plot,kmer,&(state->view));
-
-            { int  i, x;
-              int *aplot = dot->aplot;
-
-              for (i = 0; i < dot->ahit; i++)
-                { x = aplot[i];
-                  if (x >= 0)
-                    aplot[i] = ((int) floor(xa*x+22.));
-                }
-            }
-
-            r = state->colorF[0].red();
-            g = state->colorF[0].green();
-            b = state->colorF[0].blue();
+            dot = dotplot(plot,kmer,&(state->view),xa,ya);
 
             if (klen >= 3)
-              { QPainter dotter(image);
-                QPen     dPen;
+              { QPainter dotter(pimage);
+                QPen     fPen, rPen;
                 int     *aplot = dot->aplot;
                 Tuple   *blist = dot->blist;
-                int      i, x, y, k;
+                int      i, x, y, k, o;
 
-                dPen.setColor(QColor(r,g,b));
-                dPen.setWidth(1);
+                fPen.setColor(state->colorF[0]);
+                rPen.setColor(state->colorR[0]);
 
                 dotter.setRenderHint(QPainter::Antialiasing,true);
                 dotter.setClipRegion(QRect(22,22,rectW-22,rectH-22));
-                dotter.setPen(dPen);
 
                 for (i = 0; i < dot->brun; i++)
-                  { y = (int) floor(ya*blist[i].pos+22.);
+                  { y = blist[i].pos;
+                    o = y & 0x1;
+                    y >>= 1;
                     k = blist[i].code;
                     while (1)
                       { x = aplot[k++];
                         if (x < 0)
                           break;
-                        dotter.drawLine(x,y,x+klen,y+klen);
+                        if ((x & 0x1) == o)
+                          { x >>= 1;
+                            dotter.setPen(fPen);
+                            dotter.drawLine(x,y,x+klen,y+klen);
+                          }
+                        else
+                          { x >>= 1;
+                            dotter.setPen(rPen);
+                            dotter.drawLine(x+klen,y,x,y+klen);
+                          }
                       }
                   }
+
+                painter.drawImage(QPoint(0,0),*pimage);
               }
             else
-              { int i, x, k; 
-                uint8 *ras;
+              { int i, x, k, o; 
+                uint8 *pras, *nras;
                 int   *aplot = dot->aplot;
                 Tuple *blist = dot->blist;
 
-                ctable[0] = qRgb(0,0,0);
-                ctable[1] = qRgb(r,g,b);
-                for (r = 0; r < 8; r++)
-                  imbit[r] = (1<<r); 
+                r = state->colorF[0].red();
+                g = state->colorF[0].green();
+                b = state->colorF[0].blue();
+                pctable[0] = qRgba(0,0,0,0);
+                pctable[1] = qRgba(r,g,b,255);
+                r = state->colorR[0].red();
+                g = state->colorR[0].green();
+                b = state->colorR[0].blue();
+                nctable[0] = qRgba(0,0,0,0);
+                nctable[1] = qRgba(r,g,b,255);
+                for (r = 0; r < 16; r++)
+                  imbit[r] = (1<<(r>>1)); 
 
                 for (i = 0; i < dot->brun; i++)
-                  { ras = raster[((int) floor(ya*blist[i].pos+22.))];
+                  { x = blist[i].pos;
+                    o = (x & 0x1);
+                    x >>= 1;
+                    pras = praster[x];
+                    nras = nraster[x];
                     k = blist[i].code;
                     while (1)
                       { x = aplot[k++];
                         if (x < 0)
                           break;
-                        ras[x>>3] |= imbit[x&0x7];
+                        if ((x & 0x1) == o)
+                          pras[x>>4] |= imbit[x&0xf];
+                        else
+                          nras[x>>4] |= imbit[x&0xf];
                       }
                   }
-              }
 
-            painter.drawImage(QPoint(0,0),*image);
+                painter.drawImage(QPoint(0,0),*nimage);
+                painter.drawImage(QPoint(0,0),*pimage);
+              }
 
             continue;
           }
@@ -1525,7 +1545,7 @@ tryagain:
   plot = createPlot(dataset.alnInfo->absoluteFilePath().toLatin1().data(),
                     dataset.longCut,dataset.idCut,dataset.sizeCut,NULL);
   if (plot == NULL)
-    { DotWindow::warning(tr(Ebuffer),NULL,DotWindow::ERROR,tr("OK"));
+    { DotWindow::warning(tr(Error_Buffer),NULL,DotWindow::ERROR,tr("OK"));
       if (dotwindows.length() == 0)
         goto tryagain;
       else
@@ -1562,7 +1582,7 @@ void DotWindow::openOverlay()
   nplot = createPlot(dataset.alnInfo->absoluteFilePath().toLatin1().data(),
                      dataset.longCut,dataset.idCut,dataset.sizeCut,plot);
   if (nplot == NULL)
-    { DotWindow::warning(tr(Ebuffer),this,DotWindow::ERROR,tr("OK"));
+    { DotWindow::warning(tr(Error_Buffer),this,DotWindow::ERROR,tr("OK"));
       return;
     }
 
@@ -1736,10 +1756,7 @@ DotWindow::DotWindow(DotPlot *model, DotState *startState, bool isCopy) : QMainW
         layerFBox[j]->setIconSize(QSize(16,16));
         layerFBox[j]->setFixedSize(20,20);
 
-      if (j == 0)
-        layerFText[j] = new QLabel(tr("     K-mer"));
-      else
-        layerFText[j] = new QLabel(tr(" F"));
+      layerFText[j] = new QLabel(tr(" F"));
 
       layerRBox[j] = new QToolButton();
         layerRBox[j]->setIconSize(QSize(16,16));
@@ -1778,14 +1795,10 @@ DotWindow::DotWindow(DotPlot *model, DotState *startState, bool isCopy) : QMainW
         layerLayout2->addSpacing(24);
         layerLayout2->addWidget(layerFBox[j]);
         layerLayout2->addWidget(layerFText[j]);
-        if (j == 0)
-          layerLayout2->addSpacing(2);
-        else
-          { layerLayout2->addSpacing(6);
-            layerLayout2->addWidget(layerRBox[j]);
-            layerLayout2->addWidget(layerRText[j]);
-            layerLayout2->addSpacing(6);
-          }
+        layerLayout2->addSpacing(6);
+        layerLayout2->addWidget(layerRBox[j]);
+        layerLayout2->addWidget(layerRText[j]);
+        layerLayout2->addSpacing(6);
 	layerLayout2->addWidget(layerThick[j]);
 	layerLayout2->addStretch(1);
 
@@ -2240,14 +2253,14 @@ void DotWindow::checkRangeA()
 { Selection sel;
 
   if (plot != NULL && interpret_range(&sel,Arng->text().toLatin1().data(),&(plot->db1->gdb),plot->db1->hash))
-    DotWindow::warning(tr(EPLACE),this,DotWindow::ERROR,tr("OK"));
+    DotWindow::warning(tr(Error_Buffer),this,DotWindow::ERROR,tr("OK"));
 }
 
 void DotWindow::checkRangeB()
 { Selection sel;
 
   if (plot != NULL && interpret_range(&sel,Brng->text().toLatin1().data(),&(plot->db2->gdb),plot->db2->hash))
-    DotWindow::warning(tr(EPLACE),this,DotWindow::ERROR,tr("OK"));
+    DotWindow::warning(tr(Error_Buffer),this,DotWindow::ERROR,tr("OK"));
 }
 
 void DotWindow::viewChange()
@@ -2258,12 +2271,12 @@ void DotWindow::viewChange()
   int64     bb, be;
 
   if (interpret_range(&asel,Arng->text().toLatin1().data(),&(plot->db1->gdb),plot->db1->hash))
-    { DotWindow::warning(tr(EPLACE),this,DotWindow::ERROR,tr("OK"));
+    { DotWindow::warning(tr(Error_Buffer),this,DotWindow::ERROR,tr("OK"));
       return;
     }
 
   if (interpret_range(&bsel,Brng->text().toLatin1().data(),&(plot->db2->gdb),plot->db2->hash))
-    { DotWindow::warning(tr(EPLACE),this,DotWindow::ERROR,tr("OK"));
+    { DotWindow::warning(tr(Error_Buffer),this,DotWindow::ERROR,tr("OK"));
       return;
     }
 
@@ -2300,14 +2313,14 @@ void DotWindow::checkFocus()
 { Selection sel;
 
   if (plot != NULL && interpret_point(&sel,Fpnt->text().toLatin1().data(),&(plot->db1->gdb),plot->db1->hash,&(plot->db2->gdb),plot->db2->hash))
-    DotWindow::warning(tr(EPLACE),this,DotWindow::ERROR,tr("OK"));
+    DotWindow::warning(tr(Error_Buffer),this,DotWindow::ERROR,tr("OK"));
 }
 
 void DotWindow::focusChange()
 { Selection sel;
 
   if (interpret_point(&sel,Fpnt->text().toLatin1().data(),&(plot->db1->gdb),plot->db1->hash,&(plot->db2->gdb),plot->db2->hash))
-    { DotWindow::warning(tr(EPLACE),this,DotWindow::ERROR,tr("OK"));
+    { DotWindow::warning(tr(Error_Buffer),this,DotWindow::ERROR,tr("OK"));
       return;
     }
 
